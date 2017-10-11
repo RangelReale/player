@@ -14,6 +14,7 @@ Player::Player(const std::string &file_name) :
 	infolock_{},
 	video_clock_{ 0 },
 	audio_clock_{ 0 },
+	external_clock_start_{},
 
 	demuxer_{std::make_unique<Demuxer>(file_name)},
 	video_decoder_{std::make_unique<VideoDecoder>(
@@ -204,13 +205,21 @@ void Player::decode_audio() {
 						audio_clock_ = frame_decoded->pts - static_cast<int64_t>(xdelay * 1000 * 1000);
 					}
 
+					auto extclock = external_clock();
+					auto audio_diff = audio_clock_ - extclock;
+
+					//std::cout << "**** AUDIO DIFF: " << audio_diff / 1000 / 1000.0 << std::endl;
+
 					uint8_t *output;
 					int out_samples = frame_decoded->nb_samples;
+					int last_out_samples = out_samples;
 					if (av_samples_alloc(&output, NULL, audio_decoder_->channels(), out_samples, AV_SAMPLE_FMT_S16, 0) >= 0)
 					{
 						out_samples = audio_format_converter_->convert(frame_decoded.get(), &output, out_samples);
 						int bytes_per_sample = av_get_bytes_per_sample(AV_SAMPLE_FMT_S16);
 						size_t unpadded_linesize = out_samples * bytes_per_sample;
+
+						//std::cout << "**** SAMPLES: " << out_samples << " (" << last_out_samples << ")" << std::endl;
 
 						//audio_->queue(output, unpadded_linesize * 2);
 						audio_->queue(output, unpadded_linesize * audio_decoder_->channels());
@@ -227,10 +236,16 @@ void Player::decode_audio() {
 	}
 }
 
+int64_t Player::external_clock()
+{
+	std::lock_guard<std::mutex> lock(infolock_);
+	return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now() - external_clock_start_).count();
+}
+
 void Player::video() {
 	try {
 		int64_t last_pts = 0;
-
+		external_clock_start_ = std::chrono::high_resolution_clock::now();
 		Uint32 video_ticks = SDL_GetTicks();
 
 		for (uint64_t frame_number = 0;; ++frame_number) {
@@ -261,6 +276,7 @@ void Player::video() {
 					std::lock_guard<std::mutex> lock(infolock_);
 					video_clock_ = last_pts;
 				}
+				auto ext_clock = external_clock();
 
 				if (SDL_TICKS_PASSED(SDL_GetTicks(), video_ticks + 1000))
 				{
@@ -268,8 +284,9 @@ void Player::video() {
 
 					video_ticks = SDL_GetTicks();
 					//std::cout << "-- VIDEO PTS: " << (frame->pts/1000/1000.0) << std::endl;
-					std::cout << "-- VIDEO PTS: " << (video_clock_ / 1000 / 1000.0) << std::endl;
-					std::cout << "-- AUDIO PTS: " << (audio_clock_ / 1000 / 1000.0) << std::endl;
+					std::cout << "-- EXT PTS: " << (ext_clock / 1000 / 1000.0) << std::endl;
+					std::cout << "-- VIDEO PTS: " << (video_clock_ / 1000 / 1000.0) << " [" << (video_clock_- ext_clock) / 1000 / 1000.0 << "]" << std::endl;
+					std::cout << "-- AUDIO PTS: " << (audio_clock_ / 1000 / 1000.0) << " [" << (audio_clock_ - ext_clock) / 1000 / 1000.0 << "]" << std::endl;
 					std::cout << "-- DIFF PTS: " << (video_clock_ / 1000 / 1000.0) - (audio_clock_ / 1000 / 1000.0) << std::endl;
 					std::cout << "---" << std::endl;
 				}

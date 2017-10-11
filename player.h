@@ -13,6 +13,7 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <chrono>
 extern "C" {
 	#include <libavcodec/avcodec.h>
 }
@@ -26,9 +27,12 @@ private:
 	void decode_video();
 	void decode_audio();
 	void video();
+
+	int64_t external_clock();
 private:
 	std::mutex infolock_;
 	int64_t video_clock_, audio_clock_;
+	std::chrono::high_resolution_clock::time_point external_clock_start_;
 
 	std::unique_ptr<Demuxer> demuxer_;
 	std::unique_ptr<VideoDecoder> video_decoder_;
